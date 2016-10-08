@@ -1,0 +1,239 @@
+<script>
+'use strict'
+
+let frame = 0
+let canvas = null
+let context = null
+let particles = [[], []]
+let last_time = 0.0
+let sprite = null
+let noise = null
+let mouse_x = 0
+let mouse_y = 0
+let mouse_dx = 0
+let mouse_dy = 0
+
+class vec2 {
+	constructor(x, y) {
+		this.v = new Float32Array(2)
+		this.v[0] = x
+		this.v[1] = y
+	}
+
+	get x() {
+		return this.v[0]
+	}
+
+	get y() {
+		return this.v[1]
+	}
+}
+
+function rgba(r, g, b, a) {
+	return 'rgba(' + Math.round(r * 255.0) + ',' +
+		Math.round(g * 255.0) + ',' +
+		Math.round(b * 255.0) + ',' +
+		a + ')'
+}
+
+function createImage(width, height, render) {
+	let canvas = document.createElement('canvas')
+	canvas.width = width
+	canvas.height = height
+	let context = canvas.getContext('2d')
+
+	render(canvas, context)
+
+	let image = new Image()
+	image.src = canvas.toDataURL('image/png')
+	return image
+}
+
+function createParticleSprite(size, color_i, color_f) {
+	return createImage(size, size, (canvas, context) => {
+		//let gradient = context.createRadialGradient(size * 0.5, size * 0.5, size * 0.5, size * 0.5, size * 0.5, 0.0);
+		//gradient.addColorStop(0, color_f)
+		//gradient.addColorStop(1, color_i)
+		
+		let gradient = context.createRadialGradient(size  * 0.5, size  * 0.5, size * 0.25, size * 0.5, size * 0.5, size * 0.5)
+		gradient.addColorStop(0.0, '#fff')
+		gradient.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)')
+		
+		context.fillStyle = gradient
+		context.fillRect(0, 0, size, size)
+	})
+}
+
+function createNoiseLayer(width, height, pad) {
+	return {
+		pad: pad,
+		width: width,
+		height: height,
+		image: createImage(width + pad, height + pad, (canvas, context) => {
+			let buffer = context.createImageData(width + pad, height + pad)
+			for (let i = 0; i < (width + pad) * (height + pad); ++i) {
+				let v = Math.round(Math.random() * 256.0)
+				buffer.data[i * 4 + 0] = v
+				buffer.data[i * 4 + 1] = v
+				buffer.data[i * 4 + 2] = v
+				buffer.data[i * 4 + 3] = Math.round(Math.random() * 32.0)
+			}
+			context.putImageData(buffer, 0, 0)
+		}),
+	}
+}
+
+function renderNoise() {
+	let bias_x = Math.random() * noise.pad
+	let bias_y = Math.random() * noise.pad
+	
+	//context.save()
+	//context.globalCompositeOperation = 'darker'
+
+	context.drawImage(noise.image,
+		bias_x, bias_y, noise.width, noise.height,
+		0, 0, canvas.width, canvas.height)
+	
+	//context.restore()
+}
+
+function sign(v) {
+	if (v < 0.0)
+		return -1.0
+	else if (v > 0.0)
+		return 1.0
+	else
+		return 0.0
+}
+
+class Particle {
+	constructor() {
+		this.x = Math.random() * canvas.width
+		this.y = Math.random() * canvas.height
+		this.life = Math.random() * 5000 + 1000
+		this.i_life = 1.0 / this.life
+
+		this.vx = Math.random() * 2.0 - 1.0
+		this.vy = Math.random() * 2.0 - 1.0
+
+		this.i_size = (1.0 - Math.random()) * Math.sqrt(canvas.width * canvas.width + canvas.height * canvas.height) / 8
+	}
+
+	update(dt) {
+		let v = this.life * this.i_life
+
+		this.life -= dt
+		this.size = v * this.i_size
+
+		//v *= v
+
+		//let cx = (this.x - canvas.width * 0.5) / canvas.height
+		//let cy = (this.y - canvas.height * 0.5) / canvas.height
+		
+		//this.size *= Math.sqrt(cx * cx + cy * cy)
+
+		//this.y += this.vy * dt * v * 0.125 + cy * cy * sign(cy) * 8.0	// - 0.1 * dt
+		//this.x += this.vx * dt * v * 0.125 + cx * cx * sign(cx) * 8.0
+	}
+
+	render() {
+		let a = 1.0 - this.life * this.i_life
+		if (a < 0.0)
+			a = 0.0
+		if (a > 1.0)
+			a = 1.0
+		context.globalAlpha = a
+		context.drawImage(sprite, this.x - 0.5 * this.size, this.y - 0.5 * this.size, this.size, this.size)
+	}
+}
+
+function updateParticles(dt) {
+	let buffer = frame & 1
+	let other_buffer = buffer ^ 1
+
+	particles[buffer] = []
+
+	for (let i = 0; i < 16; ++i) {
+		let p = new Particle()
+		particles[buffer].unshift(new Particle())
+	}
+
+
+	for (let i in particles[other_buffer]) {
+		particles[other_buffer][i].update(dt)
+		if (particles[other_buffer][i].life >= 0.0)
+			particles[buffer].unshift(particles[other_buffer][i])
+	}
+}
+
+function renderParticles() {
+	let buffer = frame & 1
+	//let other_buffer = buffer ^ 1
+
+	context.save()
+	context.imageSmoothingEnabled = true
+	//context.globalCompositeOperation = 'lighter'
+
+	for (let i in particles[buffer])
+		particles[buffer][i].render()
+
+	context.restore()
+}
+
+function renderLoop(frame_time) {
+	let dt = frame_time - last_time
+	last_time = frame_time
+
+	updateParticles(dt)
+
+	let gradient = context.createRadialGradient(canvas.width / 4.0, canvas.height,
+		Math.sqrt(canvas.width * canvas.width + canvas.height * canvas.height) / 8.0,
+		canvas.width * 0.5, canvas.height * 0.5, Math.sqrt(canvas.width * canvas.width + canvas.height * canvas.height));
+
+	gradient.addColorStop(0.0, '#468')
+	gradient.addColorStop(0.81, '#234')
+	gradient.addColorStop(0.9, 'rgba(128, 128, 128, 0.5)')
+	gradient.addColorStop(1.0, 'rgba(0, 0, 0, 0.0)')
+
+	context.fillStyle = gradient
+
+	context.fillRect(0, 0, canvas.width, canvas.height)
+
+	renderParticles()
+	renderNoise()
+
+	++frame
+
+  window.requestAnimationFrame(renderLoop)
+}
+
+function resize() {
+	canvas.width = window.innerWidth
+	canvas.height = window.innerHeight
+}
+
+window.onload = function() {
+	canvas = document.createElement('canvas')
+	canvas.style.width = '100%'
+	canvas.style.height = '100%'
+	canvas.style.top = '0'
+	canvas.style.left = '0'
+	canvas.style.position = 'fixed'
+	//canvas.style.padding = '0'
+	canvas.style.zIndex = '-1'
+	resize()
+
+	context = canvas.getContext('2d')
+	document.body.appendChild(canvas)
+
+	sprite = createParticleSprite(64, rgba(0.0, 0.0, 0.0, 1.0), rgba(1.0, 1.0, 1.0, 0.0))
+	noise = createNoiseLayer(canvas.width * 0.5, canvas.height * 0.5, 64)
+
+	window.addEventListener('resize', resize)
+
+	document.onmousemove = (e) => {
+		console.log(e)
+	}
+	renderLoop(0)
+}
+</script>
